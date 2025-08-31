@@ -5,6 +5,8 @@ set -e
 AWS_PROFILE="${AWS_PROFILE:-default}"
 OUTPUT_FILE="${1:-/tmp/aws_env_vars}"
 
+echo "AWS Credentials Handler - Profile: $AWS_PROFILE"
+
 # Variables para credenciales
 AWS_ACCESS_KEY_ID=""
 AWS_SECRET_ACCESS_KEY=""
@@ -16,8 +18,11 @@ read_aws_files() {
     local aws_dir="$1"
     
     if [[ ! -d "$aws_dir" ]]; then
+        echo "Directorio $aws_dir no encontrado"
         return 1
     fi
+    
+    echo "Leyendo archivos AWS desde: $aws_dir"
     
     local credentials_file="$aws_dir/credentials"
     local config_file="$aws_dir/config"
@@ -58,6 +63,7 @@ read_aws_files() {
 
 # Función para leer variables de entorno
 read_env_variables() {
+    echo "Usando variables de entorno como fallback..."
     [[ -z "$AWS_ACCESS_KEY_ID" ]] && AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-}"
     [[ -z "$AWS_SECRET_ACCESS_KEY" ]] && AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-}"
     [[ -z "$AWS_SESSION_TOKEN" ]] && AWS_SESSION_TOKEN="${AWS_SESSION_TOKEN:-}"
@@ -71,8 +77,11 @@ generate_session_token() {
     fi
     
     if ! command -v aws >/dev/null 2>&1; then
+        echo "AWS CLI no disponible, usando credenciales directas"
         return 1
     fi
+    
+    echo "Generando session token temporal..."
     
     local sts_output
     sts_output=$(AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
@@ -85,8 +94,11 @@ generate_session_token() {
         AWS_ACCESS_KEY_ID=$(echo "$sts_output" | grep -o '"AccessKeyId": "[^"]*"' | cut -d'"' -f4)
         AWS_SECRET_ACCESS_KEY=$(echo "$sts_output" | grep -o '"SecretAccessKey": "[^"]*"' | cut -d'"' -f4)
         AWS_SESSION_TOKEN=$(echo "$sts_output" | grep -o '"SessionToken": "[^"]*"' | cut -d'"' -f4)
+        echo "Session token generado exitosamente"
         return 0
     else
+        echo "No se pudo generar session token"
+        echo "Revise sus credenciales de AWS"
         return 1
     fi
 }
@@ -105,27 +117,35 @@ case "$(uname -s)" in
         ;;
 esac
 
-# Completar con variables de entorno
-read_env_variables
+# Completar con variables de entorno SOLO si no se encontraron en archivos
+if [[ -z "$AWS_ACCESS_KEY_ID" || -z "$AWS_SECRET_ACCESS_KEY" ]]; then
+    read_env_variables
+fi
 
 # Validar credenciales mínimas
 if [[ -z "$AWS_ACCESS_KEY_ID" || -z "$AWS_SECRET_ACCESS_KEY" ]]; then
     echo "Error: Credenciales AWS no encontradas"
+    echo "AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-(vacío)}"
+    echo "AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-(vacío)}"
     exit 1
 fi
 
 # Generar session token si no existe
 if [[ -z "$AWS_SESSION_TOKEN" ]]; then
     generate_session_token || true
+    #generate_session_token
 fi
 
 # Configurar región por defecto
 [[ -z "$AWS_REGION" ]] && AWS_REGION="us-east-1"
 
 # Generar archivo de variables para Docker
+echo "Generando archivo de variables: $OUTPUT_FILE"
 cat > "$OUTPUT_FILE" << EOF
 AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
 AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
 AWS_SESSION_TOKEN=$AWS_SESSION_TOKEN
 AWS_REGION=$AWS_REGION
 EOF
+
+echo "Credenciales configuradas - Region: $AWS_REGION"

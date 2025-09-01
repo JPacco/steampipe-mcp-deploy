@@ -82,23 +82,51 @@ generate_session_token() {
     fi
     
     echo "Generando session token temporal..."
+    echo "AWS_REGION: $AWS_REGION"
+
+    # Exportar las variables temporalmente para el comando AWS
+    export AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID"
+    export AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY"
+    export AWS_REGION="$AWS_REGION"
+    
+    # Limpiar cualquier session token previo para evitar conflictos
+    unset AWS_SESSION_TOKEN
     
     local sts_output
-    sts_output=$(AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
-                 AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
-                 aws sts get-session-token \
-                 --duration-seconds 3600 \
-                 --output json 2>/dev/null)
+    local aws_exit_code
     
-    if [[ $? -eq 0 ]]; then
-        AWS_ACCESS_KEY_ID=$(echo "$sts_output" | grep -o '"AccessKeyId": "[^"]*"' | cut -d'"' -f4)
-        AWS_SECRET_ACCESS_KEY=$(echo "$sts_output" | grep -o '"SecretAccessKey": "[^"]*"' | cut -d'"' -f4)
-        AWS_SESSION_TOKEN=$(echo "$sts_output" | grep -o '"SessionToken": "[^"]*"' | cut -d'"' -f4)
-        echo "Session token generado exitosamente"
-        return 0
+    # Ejecutar el comando y capturar tanto la salida como el código de salida
+    sts_output=$(aws sts get-session-token \
+                 --duration-seconds 3600 \
+                 --output json 2>&1)
+    aws_exit_code=$?
+
+    if [[ $aws_exit_code -eq 0 ]]; then
+        # Usar jq si está disponible para un parsing más confiable
+        if command -v jq >/dev/null 2>&1; then
+            AWS_ACCESS_KEY_ID=$(echo "$sts_output" | jq -r '.Credentials.AccessKeyId')
+            AWS_SECRET_ACCESS_KEY=$(echo "$sts_output" | jq -r '.Credentials.SecretAccessKey')
+            AWS_SESSION_TOKEN=$(echo "$sts_output" | jq -r '.Credentials.SessionToken')
+        else
+            # Fallback usando grep (método original pero mejorado)
+            AWS_ACCESS_KEY_ID=$(echo "$sts_output" | grep -o '"AccessKeyId"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4)
+            AWS_SECRET_ACCESS_KEY=$(echo "$sts_output" | grep -o '"SecretAccessKey"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4)
+            AWS_SESSION_TOKEN=$(echo "$sts_output" | grep -o '"SessionToken"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4)
+        fi
+        
+        # Verificar que se extrajeron los valores correctamente
+        if [[ -n "$AWS_ACCESS_KEY_ID" && -n "$AWS_SECRET_ACCESS_KEY" && -n "$AWS_SESSION_TOKEN" ]]; then
+            echo "Session token generado exitosamente"
+            return 0
+        else
+            echo "Error: No se pudieron extraer las credenciales del JSON"
+            echo "Respuesta de AWS STS: $sts_output"
+            return 1
+        fi
     else
-        echo "No se pudo generar session token"
-        echo "Revise sus credenciales de AWS"
+        echo "Error al ejecutar aws sts get-session-token"
+        echo "Código de salida: $aws_exit_code"
+        echo "Salida del comando: $sts_output"
         return 1
     fi
 }
@@ -130,10 +158,12 @@ if [[ -z "$AWS_ACCESS_KEY_ID" || -z "$AWS_SECRET_ACCESS_KEY" ]]; then
     exit 1
 fi
 
-# Generar session token si no existe
+# Generar session token si no existe (FATAL si falla)
 if [[ -z "$AWS_SESSION_TOKEN" ]]; then
-    generate_session_token || true
-    #generate_session_token
+    if ! generate_session_token; then
+        echo "No se pudo generar session token. Abortando."
+        exit 1
+    fi
 fi
 
 # Configurar región por defecto

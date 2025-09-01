@@ -13,6 +13,9 @@ bash "$SCRIPT_DIR/aws-credentials-handler.sh" "$AWS_ENV_FILE"
 echo "🚀 Iniciando Steampipe con docker-compose..."
 docker-compose --env-file "$AWS_ENV_FILE" up -d
 
+echo "Borrando credenciales temporales..."
+rm "$AWS_ENV_FILE"
+
 echo "✅ Steampipe iniciado"
 echo "💡 Para acceder: docker-compose exec steampipe bash"
 echo "💡 Para detener: docker-compose down"

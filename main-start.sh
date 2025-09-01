@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# start.sh - Script simple para ejecutar Steampipe con docker-compose
+# main-start.sh - Script simple para ejecutar Steampipe con docker-compose
 
 set -e
 
